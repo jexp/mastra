@@ -1,0 +1,117 @@
+---
+title: CypherLite Storage
+sidebar_label: CypherLite Storage
+description: "Use the CypherLite storage adapter to keep Mastra's knowledge nodes and records in an embedded openCypher graph database."
+packages:
+  - "@mastra/cypherlite"
+  - "@mastra/core"
+---
+
+# CypherLite Storage
+
+`@mastra/cypherlite` stores the [Knowledge domain](/reference/storage/overview) in an embedded
+[CypherLite](https://github.com/neo4j-labs/cypherlite) graph database. CypherLite runs in the same process as
+your application, so knowledge nodes and their relationships stay queryable with Cypher and no database server
+is required.
+
+:::note
+
+Knowledge storage is experimental. Its contract and this adapter can change without notice.
+
+:::
+
+## Installation
+
+```bash npm2yarn
+npm install @mastra/cypherlite
+```
+
+The package brings `@neo4j-labs/cypherlite`, the Node.js client, as a dependency. The client loads a native
+library for your platform. Builds from this repository link the client from a CypherLite checkout and compile
+that library themselves, as described in [Development](#development).
+
+## Usage
+
+`CypherLiteKnowledgeStorage` implements the `knowledge` domain. Add it to a composite store when your other
+domains already have a backend:
+
+```typescript title="src/mastra/index.ts"
+import { Mastra } from '@mastra/core'
+import { MastraCompositeStore } from '@mastra/core/storage'
+import { CypherLiteKnowledgeStorage } from '@mastra/cypherlite'
+
+const storage = new MastraCompositeStore({
+  id: 'storage',
+  domains: {
+    knowledge: new CypherLiteKnowledgeStorage({ path: './knowledge.db' }),
+  },
+})
+
+export const mastra = new Mastra({ storage })
+```
+
+Mastra calls `init()` on each configured domain. When you use the storage class directly, call it yourself:
+
+```typescript
+import { CypherLiteKnowledgeStorage } from '@mastra/cypherlite'
+
+const storage = new CypherLiteKnowledgeStorage({ path: './knowledge.db' })
+await storage.init()
+```
+
+`init()` creates the constraints and the schema version marker. It is idempotent.
+
+## Constructor options
+
+- `path` (string): Path to the database. Use `:memory:` for an in-memory database, or a file or directory path
+  for a persistent one.
+- `connection` (`Connection`): An already-open CypherLite connection. The caller keeps ownership of the database.
+
+Pass exactly one of `path` or `connection`. Passing both, or neither, throws a `TypeError`. The constructor
+opens the database synchronously. `storage.connection` returns the open connection when your application needs
+to run raw Cypher against the same database.
+
+## Schema
+
+Knowledge data lives under dedicated labels: `KNode` for nodes, `KRecord` for records, `KActivity` for the
+activity feed, `KOutbox` for the semantic outbox, and `KScope` for structural scopes. A `KMeta` row carries the
+schema version marker. Merges are `MERGED_INTO` edges from the source node to the terminal node, and structural
+placement is `IN_SCOPE` edges. Timestamps are stored as epoch milliseconds.
+
+The adapter owns only those labels. Other nodes and relationships in the same database belong to your
+application and are left alone by schema inspection and by `dangerouslyReset()`.
+
+## Soft delete
+
+`removeKnowledge()` does not delete a record. The record node keeps its `KRecord` label and gains a `Deleted`
+label, together with `deletedAt` and `deletedBy` properties that record when and by whom the record was removed.
+
+- Reads filter on `NOT r:Deleted` unless you pass `includeDeleted`. `getKnowledge({ id, includeDeleted: true })`
+  returns a removed record.
+- `restoreKnowledge()` removes the `Deleted` label and clears `deletedAt` and `deletedBy`. The record's
+  `MENTIONS` edges survive the delete and restore cycle because only labels and properties change.
+- Removing a record that is already removed is a no-op that returns the stored record.
+
+`Deleted` is not one of the labels that mark Knowledge data. Schema inspection and `dangerouslyReset()` key off
+the Knowledge labels, so an application node that happens to carry a `Deleted` label is not treated as Knowledge
+structure and is not removed by a reset. A reset deletes the Knowledge rows and the edges between them, keeps
+the `KMeta` marker, and leaves all application data in place.
+
+## Capabilities
+
+`getCapabilities()` reports contract version 2 and schema version 2 with `supportsV2`,
+`supportsSchemaInspection`, and `supportsExplicitReset` enabled. `inspectSchema()` reports whether the store is
+compatible, uninitialized, needs a reset, or is unavailable.
+
+## Development
+
+This package depends on the CypherLite JavaScript client through a `file:` link to a CypherLite checkout, so a
+repository build needs that checkout and a compiled native library. Install the workspace with the package
+filter, then point `CYPHERLITE_LIB` at the built library when you run the tests:
+
+```bash
+pnpm install --filter "@mastra/cypherlite..."
+CYPHERLITE_LIB=/path/to/cypherlite/target/release/libcypherlite_ffi.dylib pnpm --filter @mastra/cypherlite test
+```
+
+Use the library suffix for your platform: `.dylib` on macOS, `.so` on Linux, `.dll` on Windows.

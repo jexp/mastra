@@ -4873,6 +4873,40 @@ importers:
         specifier: 'catalog:'
         version: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@22.19.15)(@vitest/coverage-v8@4.1.12)(@vitest/ui@4.1.12)(jsdom@30.1.3(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.15)(typescript@7.0.2))(vite@8.3.5(@types/node@22.19.15)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
 
+  packages/cypherlite:
+    dependencies:
+      '@neo4j-labs/cypherlite':
+        specifier: file:/Users/mh/d/go/cypherlite/clients/javascript
+        version: file:../../../../../../go/cypherlite/clients/javascript
+    devDependencies:
+      '@internal/lint':
+        specifier: workspace:*
+        version: link:../_config
+      '@internal/types-builder':
+        specifier: workspace:*
+        version: link:../_types-builder
+      '@mastra/core':
+        specifier: workspace:*
+        version: link:../core
+      '@types/node':
+        specifier: 22.19.15
+        version: 22.19.15
+      '@vitest/coverage-v8':
+        specifier: 'catalog:'
+        version: 4.1.12(vitest@4.1.12)
+      '@vitest/ui':
+        specifier: 'catalog:'
+        version: 4.1.12(vitest@4.1.12)
+      tsdown:
+        specifier: 0.23.1
+        version: 0.23.1(@volar/typescript@2.4.23(typescript@7.0.2))(oxc-resolver@11.21.2)(tsx@4.23.15)(typescript@7.0.2)
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@22.19.15)(@vitest/coverage-v8@4.1.12)(@vitest/ui@4.1.12)(jsdom@30.1.3(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.15)(typescript@7.0.2))(vite@8.3.5(@types/node@22.19.15)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
+
   packages/deployer:
     dependencies:
       '@babel/core':
@@ -16267,6 +16301,10 @@ packages:
       '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
       '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
 
+  '@neo4j-labs/cypherlite@file:../../../../../../go/cypherlite/clients/javascript':
+    resolution: {directory: ../../../../../../go/cypherlite/clients/javascript, type: directory}
+    engines: {node: '>=18'}
+
   '@neon-rs/load@0.0.4':
     resolution: {integrity: sha512-kTPhdZyTQxB+2wpiRcFWrDcejc4JI6tkPuS7UZCG4l6Zvc5kU/gGQ/ozvHTh1XR5tS+UlfAfGuPajjzQjCiHCw==}
 
@@ -26208,6 +26246,9 @@ packages:
   koa@3.2.1:
     resolution: {integrity: sha512-e7IpWJrnanNUroVK2taAgMxoEZvHLXdQiNjeExSu/DEIWm83jaKGBgb7tLmu2rMYpA027qFB3iLR/k3AVpFRnA==}
     engines: {node: '>= 18'}
+
+  koffi@2.16.3:
+    resolution: {integrity: sha512-E9y1AsgYGlaxMhcZzHr8y96QF2U5XzA12GGVAfbWqIubTwPNMXQarfBzePNXHe0xtIEtNd6ifAv3GAKYGUeBAQ==}
 
   kubernetes-types@1.30.0:
     resolution: {integrity: sha512-Dew1okvhM/SQcIa2rcgujNndZwU8VnSapDgdxlYoB84ZlpAD43U6KLAFqYo17ykSFGHNPrg0qry0bP+GJd9v7Q==}
@@ -39719,6 +39760,10 @@ snapshots:
       '@tybys/wasm-util': 0.10.4
     optional: true
 
+  '@neo4j-labs/cypherlite@file:../../../../../../go/cypherlite/clients/javascript':
+    dependencies:
+      koffi: 2.16.3
+
   '@neon-rs/load@0.0.4': {}
 
   '@nestjs/common@12.2.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@10.2.2)':
@@ -43321,7 +43366,7 @@ snapshots:
       '@stryker-mutator/util': 10.0.0
       semver: 7.8.5
       tslib: 2.8.1
-      vitest: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@22.19.15)(@vitest/coverage-v8@4.1.12)(@vitest/ui@4.1.12)(jsdom@30.1.3(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.15)(typescript@6.0.3))(vite@8.3.5(@types/node@22.19.15)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
+      vitest: 4.1.12(@opentelemetry/api@1.10.0)(@types/node@22.19.15)(@vitest/coverage-v8@4.1.12)(@vitest/ui@4.1.12)(jsdom@30.1.3(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@22.19.15)(typescript@7.0.2))(vite@8.3.5(@types/node@22.19.15)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
 
   '@supabase/auth-js@2.118.0':
     dependencies:
@@ -50647,6 +50692,8 @@ snapshots:
       statuses: 2.0.2
       type-is: 2.1.0
       vary: 1.1.2
+
+  koffi@2.16.3: {}
 
   kubernetes-types@1.30.0: {}
 

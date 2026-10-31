@@ -1,0 +1,62 @@
+{
+  "name": "@mastra/cypherlite",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "CypherLite-backed knowledge storage for Mastra",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "homepage": "https://mastra.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mastra-ai/mastra.git",
+    "directory": "packages/cypherlite"
+  },
+  "bugs": {
+    "url": "https://github.com/mastra-ai/mastra/issues"
+  },
+  "scripts": {
+    "build": "tsdown --silent --config tsdown.config.ts",
+    "build:watch": "tsdown --watch --silent --config tsdown.config.ts",
+    "lint": "oxlint --type-aware .",
+    "lint:fix": "oxlint --type-aware --fix .",
+    "test": "vitest run --project 'unit:packages/cypherlite' --passWithNoTests",
+    "typecheck": "tsc --noEmit -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@neo4j-labs/cypherlite": "file:/Users/mh/d/go/cypherlite/clients/javascript"
+  },
+  "devDependencies": {
+    "@internal/lint": "workspace:*",
+    "@internal/types-builder": "workspace:*",
+    "@mastra/core": "workspace:*",
+    "@types/node": "22.19.15",
+    "@vitest/coverage-v8": "catalog:",
+    "@vitest/ui": "catalog:",
+    "tsdown": "0.23.1",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@mastra/core": ">=1.0.0-0 <2.0.0-0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}
