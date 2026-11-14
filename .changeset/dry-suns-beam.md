@@ -1,23 +1,24 @@
 ---
-'@mastra/cypherlite': minor
+'@mastra/relate': minor
 ---
 
-Added `@mastra/cypherlite`, a storage adapter that keeps knowledge nodes and records in an embedded [CypherLite](https://github.com/neo4j-labs/cypherlite) graph database. No database server is required.
+Added `@mastra/relate`, a storage adapter that keeps the Knowledge page store in an embedded [Relate](https://relatedb.ai) graph database. No database server is required.
 
 ```ts title="src/mastra/index.ts"
 import { MastraCompositeStore } from '@mastra/core/storage';
-import { CypherLiteKnowledgeStorage } from '@mastra/cypherlite';
+import { RelateKnowledgeStorage } from '@mastra/relate';
 
 const storage = new MastraCompositeStore({
   id: 'storage',
   domains: {
-    knowledge: new CypherLiteKnowledgeStorage({ path: './knowledge.db' }),
+    knowledge: new RelateKnowledgeStorage({ path: './knowledge.db' }),
   },
 });
 ```
 
 **What it stores**
 
-- Knowledge nodes, records, mentions, activity and the semantic outbox, with merges as `MERGED_INTO` edges and structural scopes as `IN_SCOPE` edges.
-- Records removed with `removeKnowledge()` stay in the graph under a `Deleted` label with `deletedAt` and `deletedBy`, and reads skip them unless you ask for removed records.
-- `dangerouslyReset()` removes only the knowledge labels, so application nodes in the same database survive a reset.
+- The Knowledge schema-4 page store: scope pages and declarations, pages with bodies and `[[wikilink]]` body links, notes with mentions, page activity, and page search — the full `KnowledgePageStore` contract over openCypher.
+- Pages removed with `deletePage()` stay in the graph under a `Deleted` label with `deletedAt`/`deletedBy`, and reads skip them unless deleted output is requested.
+- `dangerouslyReset()` removes only the Knowledge labels, so application nodes in the same database survive a reset.
+- The store can be opened as a Relate **markdown vault** (`relate --snapshot-format markdown`): pages round-trip as `KPage/<key>.md` files with frontmatter and `[[wikilinks]]`, editable in Obsidian, with hand edits picked up on the next open.

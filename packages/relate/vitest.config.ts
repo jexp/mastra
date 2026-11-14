@@ -5,7 +5,7 @@ export default defineConfig({
     projects: [
       {
         test: {
-          name: 'unit:packages/cypherlite',
+          name: 'unit:packages/relate',
           environment: 'node',
           include: ['src/**/*.test.ts'],
         },

@@ -740,7 +740,7 @@ const sidebars = {
       items: [
         { type: 'doc', id: 'storage/overview', label: 'Overview' },
         { type: 'doc', id: 'storage/composite', label: 'Composite Storage' },
-        { type: 'doc', id: 'storage/cypherlite', label: 'CypherLite Storage' },
+        { type: 'doc', id: 'storage/relate', label: 'Relate Storage' },
         { type: 'doc', id: 'storage/retention', label: 'Retention (prune)' },
         { type: 'doc', id: 'storage/turso', label: 'Turso Storage' },
       ],

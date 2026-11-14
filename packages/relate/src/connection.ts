@@ -1,19 +1,19 @@
-import { Database } from '@neo4j-labs/cypherlite';
-import type { Connection as ClientConnection, Row as ClientRow } from '@neo4j-labs/cypherlite';
+import { Database } from '@relate/relate';
+import type { Connection as ClientConnection, Row as ClientRow } from '@relate/relate';
 
-/** Opens a CypherLite database at `path` (`:memory:`, a file or a directory) and connects to it. */
-export interface CypherLitePathConfig {
+/** Opens a Relate database at `path` (`:memory:`, a file or a directory) and connects to it. */
+export interface RelatePathConfig {
   path: string;
   connection?: never;
 }
 
-/** Uses an already-open CypherLite connection; the caller keeps ownership of the database. */
-export interface CypherLiteConnectionConfig {
+/** Uses an already-open Relate connection; the caller keeps ownership of the database. */
+export interface RelateConnectionConfig {
   connection: ClientConnection;
   path?: never;
 }
 
-export type CypherLiteStorageConfig = CypherLitePathConfig | CypherLiteConnectionConfig;
+export type RelateStorageConfig = RelatePathConfig | RelateConnectionConfig;
 
 /** One row as a statement returns it: a record of projected columns. Shared by every domain module. */
 export type AdapterRow = ClientRow;
@@ -23,12 +23,12 @@ export type AdapterRow = ClientRow;
  * reach raw Cypher through it) and the one transaction frame every mutating method runs in.
  */
 export interface AdapterContext {
-  /** The open CypherLite connection. The client is synchronous; every call returns materialized rows. */
+  /** The open Relate connection. The client is synchronous; every call returns materialized rows. */
   readonly connection: ClientConnection;
   /** Runs one statement and returns its materialized rows. */
   run(statement: string, params?: Record<string, unknown>): AdapterRow[];
   /**
-   * Runs `operation` inside `begin`/`commit` and rolls back when it throws. CypherLite has no
+   * Runs `operation` inside `begin`/`commit` and rolls back when it throws. Relate has no
    * nested transactions, so domains call this exactly once per public mutating method; helpers
    * inside the frame must not open their own. The callback is synchronous on purpose: the engine
    * is synchronous, and an `await` inside the frame would commit before the work finished.
@@ -36,7 +36,7 @@ export interface AdapterContext {
   transaction<T>(operation: () => T): T;
 }
 
-class CypherLiteContext implements AdapterContext {
+class RelateContext implements AdapterContext {
   readonly connection: ClientConnection;
 
   constructor(connection: ClientConnection) {
@@ -84,12 +84,12 @@ export function projectColumns(
 }
 
 /** Builds the adapter context, opening the database when the config names a path. */
-export function createAdapterContext(config: CypherLiteStorageConfig): AdapterContext {
+export function createAdapterContext(config: RelateStorageConfig): AdapterContext {
   const { connection, path } = config;
   if (connection !== undefined && path !== undefined) {
-    throw new TypeError('CypherLite knowledge storage takes either { path } or { connection }, not both');
+    throw new TypeError('Relate knowledge storage takes either { path } or { connection }, not both');
   }
-  if (connection !== undefined) return new CypherLiteContext(connection);
-  if (path !== undefined) return new CypherLiteContext(Database.open(path).connect());
-  throw new TypeError('CypherLite knowledge storage requires { path } or { connection }');
+  if (connection !== undefined) return new RelateContext(connection);
+  if (path !== undefined) return new RelateContext(Database.open(path).connect());
+  throw new TypeError('Relate knowledge storage requires { path } or { connection }');
 }

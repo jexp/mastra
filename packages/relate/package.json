@@ -1,9 +1,9 @@
 {
-  "name": "@mastra/cypherlite",
+  "name": "@mastra/relate",
   "version": "0.0.0",
   "license": "Apache-2.0",
   "type": "module",
-  "description": "CypherLite-backed knowledge storage for Mastra",
+  "description": "Relate-backed knowledge storage for Mastra",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -26,7 +26,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mastra-ai/mastra.git",
-    "directory": "packages/cypherlite"
+    "directory": "packages/relate"
   },
   "bugs": {
     "url": "https://github.com/mastra-ai/mastra/issues"
@@ -36,11 +36,11 @@
     "build:watch": "tsdown --watch --silent --config tsdown.config.ts",
     "lint": "oxlint --type-aware .",
     "lint:fix": "oxlint --type-aware --fix .",
-    "test": "vitest run --project 'unit:packages/cypherlite' --passWithNoTests",
+    "test": "vitest run --project 'unit:packages/relate' --passWithNoTests",
     "typecheck": "tsc --noEmit -p tsconfig.build.json"
   },
   "dependencies": {
-    "@neo4j-labs/cypherlite": "file:/Users/mh/d/go/cypherlite/clients/javascript"
+    "@relate/relate": "^1.0.1"
   },
   "devDependencies": {
     "@internal/lint": "workspace:*",
