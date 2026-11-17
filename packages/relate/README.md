@@ -1,86 +1,87 @@
-# @mastra/cypherlite
+# @mastra/relate
 
-CypherLite-backed knowledge storage for Mastra.
+Relate-backed knowledge storage for Mastra.
 
-The package implements Mastra's experimental Knowledge storage domain on top of
-[CypherLite](https://github.com/neo4j-labs/cypherlite), an in-process openCypher graph engine. It reaches the
-engine through `@neo4j-labs/cypherlite`, the Node.js client that wraps the C ABI with koffi.
+The package implements Mastra's experimental Knowledge storage domain (the schema-4 page store) on top of
+[Relate](https://relatedb.ai), an embedded openCypher graph engine, through the published Node.js client
+[`@relate/relate`](https://www.npmjs.com/package/@relate/relate) (platform native libraries ship as optional
+dependencies — no C toolchain, no env vars).
 
 ## Usage
 
 ```ts
 import { MastraCompositeStore } from '@mastra/core/storage';
-import { CypherLiteKnowledgeStorage } from '@mastra/cypherlite';
+import { RelateKnowledgeStorage } from '@mastra/relate';
 
 const storage = new MastraCompositeStore({
   id: 'storage',
   domains: {
-    knowledge: new CypherLiteKnowledgeStorage({ path: './knowledge.db' }),
+    knowledge: new RelateKnowledgeStorage({ path: './knowledge.db' }),
   },
 });
 ```
 
-Pass `path` for an embedded database (`:memory:`, a file, or a directory) or `connection` for a CypherLite
-connection you opened yourself. Pass exactly one. The constructor opens the database synchronously; call `init()`
-once to create the constraints and the schema version marker. `init()` is idempotent and refuses to write over a
-store that already holds Knowledge labels but carries a missing or incompatible schema version marker.
+Pass `path` for an embedded database (`:memory:`, a `.rl` file, or a directory) or `connection` for a Relate
+connection you opened yourself. Pass exactly one. Constructing the store is side-effect free — the database
+connects lazily on first use — and the composite store calls `init()` before first use, which stamps the
+schema-4 version marker idempotently.
 
 ## Constructor options
 
-- `path` (string): Path opened with `Database.open(path).connect()`. Use `:memory:` for an embedded database.
-- `connection` (`Connection`): An already-open CypherLite connection. The caller keeps ownership of the database.
+- `path` (string): Path opened with `Database.open(path).connect()`. Use `:memory:` for an ephemeral store.
+- `connection` (`Connection`): An already-open Relate connection. The caller keeps ownership of the database.
+- `storageIsolationKey` (string): Overrides the derived storage-isolation key. Two Knowledge domains over
+  the same file (or the same connection) report the same key, so Mastra's shared-storage guard can reject
+  them; `:memory:` handles each count as their own backend.
 
 `storage.connection` exposes the open connection, so application code can run raw Cypher against the same
-database. Knowledge data uses the labels `KNode`, `KRecord`, `KActivity`, `KOutbox`, and `KScope`, plus a `KMeta`
-schema marker. Merges are `MERGED_INTO` edges (the source points at the terminal node) and structural placement
-is `IN_SCOPE` edges. Timestamps are stored as epoch milliseconds.
+database. Knowledge data uses one label per domain — `KPage` (pages and scope pages), `KNote`, `KPin`,
+`KActivity`, `KBodyLink` — plus a `KMeta` schema marker. Timestamps are stored as epoch milliseconds.
+
+## Graph schema
+
+Everything the contract stores is a node property; pages reference parents and scopes by id, notes carry
+stamp scopes and resolved mentions as id lists, and body links are one `KBodyLink` node per (page, ref):
+
+```cypher
+MATCH (p:KPage {isScope: false}) RETURN p.name, p.key, p.body LIMIT 10
+MATCH (scope:KPage {isScope: true}) RETURN scope.address, scope.declaration
+```
+
+The label layout is vault-friendly: pages keep their body in one `body` property, so a store can be opened
+as a Relate **markdown vault** (`relate --snapshot-format markdown --database ./knowledge-vault`, created on
+an empty directory) and the pages round-trip as `KPage/<name>.md` files (one per page, named after the page
+name) with YAML frontmatter and `[[wikilinks]]`, readable in Obsidian. Edits to a file's body are picked up
+at the next open; editing the YAML frontmatter itself is not supported by `@relate/relate` 1.0.1 and can
+make the next open fail — treat the frontmatter as generated.
 
 ## Soft delete
 
-`removeKnowledge()` marks a record instead of deleting it:
+`deletePage()` marks a page instead of deleting it: the page keeps its `KPage` label, gains `deletedAt` and
+`deletedBy` properties, and listings and searches skip it. `getPage` still returns a removed page (with
+`deletedAt` set) — that is the schema-4 contract — while `getPages`, `getPageByPath` and the list/find
+methods treat it as gone. `getNote({ includeDeleted })` and `listNotes` with `includeDeleted` return removed
+notes; `restoreNote()` brings them back. `mergePages()` soft-deletes the source with `mergedInto` pointing
+at the target.
 
-- The record node keeps its `KRecord` label and gains the `Deleted` label, with `deletedAt` (epoch milliseconds)
-  and `deletedBy` properties. The API exposes both as a `Date` and a string.
-- Every read filters on `NOT r:Deleted` unless you pass `includeDeleted`, and `getKnowledge({ includeDeleted })`
-  returns a removed record.
-- `restoreKnowledge()` removes the label and clears both properties. The record's `MENTIONS` edges survive the
-  delete and restore cycle because only labels and properties change.
-- Removing an already removed record is a no-op that returns the stored record.
-
-`Deleted` is deliberately not one of the Knowledge data labels. Schema inspection and
-`dangerouslyReset()` key off `KRecord`, so an application node that happens to carry a `Deleted` label is never
-treated as Knowledge structure or removed by a reset. A reset deletes the Knowledge labels and the edges between
-them and leaves the `KMeta` marker and all application data in place.
+`init()` drops a pre-schema-4 (schema-2, CypherLite-era) store on first use — that data was experimental and
+is not migrated — while a schema-4 marker from a newer release makes `init()` refuse until
+`dangerouslyReset()` is called. `dangerouslyReset()` deletes only the Knowledge labels (including the legacy
+`KNode`, `KRecord`, `KOutbox`, `KScope`) and leaves every application node in the same database in place.
 
 ## Local development
 
-The package depends on the CypherLite JavaScript client through a `file:` link to a CypherLite checkout:
-
-```json
-"dependencies": {
-  "@neo4j-labs/cypherlite": "file:/path/to/cypherlite/clients/javascript"
-}
-```
-
-Install the workspace with the filter so pnpm links that client, and build the CypherLite native library first:
-
 ```bash
-pnpm install --filter "@mastra/cypherlite..."
-cargo build --release -p cypherlite-ffi --manifest-path /path/to/cypherlite/Cargo.toml
+pnpm install --filter "@mastra/relate..."
+pnpm turbo build --filter=@mastra/relate   # builds @mastra/core and the other dependencies first
+pnpm --filter @mastra/relate test          # contract suite against the reference scenarios
+pnpm --filter @mastra/relate typecheck
+pnpm --filter @mastra/relate lint
 ```
-
-The client loads a platform native library. For a CypherLite checkout, point `CYPHERLITE_LIB` at the built
-`libcypherlite_ffi` before running the tests:
-
-```bash
-CYPHERLITE_LIB=/path/to/cypherlite/target/release/libcypherlite_ffi.dylib pnpm --filter @mastra/cypherlite test
-```
-
-Use the platform suffix for your system: `.dylib` on macOS, `.so` on Linux, `.dll` on Windows.
 
 ## Documentation
 
-The adapter is documented at [CypherLite Storage](https://mastra.ai/reference/storage/cypherlite).
+The adapter is documented at [Relate Storage](https://mastra.ai/reference/storage/relate).
 
 ## Support
 

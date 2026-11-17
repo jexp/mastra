@@ -6,5 +6,5 @@
  */
 export const RELATE_PACKAGE_NAME = '@mastra/relate';
 
-export type { RelateStorageConfig } from './connection';
+export type { RelateStorageConfig, RelateStorageOptions } from './connection';
 export { RelateKnowledgeStorage } from './storage';

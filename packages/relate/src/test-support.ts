@@ -1,4 +1,5 @@
 import { Database } from '@relate/relate';
+import type { ParamValue } from '@relate/relate';
 
 import type { RelateStorageConfig } from './connection';
 import { RelateKnowledgeStorage } from './storage';
@@ -8,8 +9,15 @@ export function openStorage(config?: RelateStorageConfig): RelateKnowledgeStorag
   return new RelateKnowledgeStorage(config ?? { connection: Database.open(':memory:').connect() });
 }
 
-/** Counts the nodes carrying `label`, defaulting to `KNode`. */
-export function countNodes(storage: RelateKnowledgeStorage, label = 'KNode'): number {
+/** Opens the adapter over a fresh `:memory:` database and initializes its schema marker. */
+export async function openInitializedStorage(config?: RelateStorageConfig): Promise<RelateKnowledgeStorage> {
+  const storage = openStorage(config);
+  await storage.init();
+  return storage;
+}
+
+/** Counts the nodes carrying `label`, defaulting to `KPage`. */
+export function countNodes(storage: RelateKnowledgeStorage, label = 'KPage'): number {
   const row = storage.connection.query(`MATCH (n:${label}) RETURN count(n) AS count`).rows[0];
   return Number(row?.count ?? 0);
 }
@@ -18,12 +26,7 @@ export function countNodes(storage: RelateKnowledgeStorage, label = 'KNode'): nu
 export function countRows(
   storage: RelateKnowledgeStorage,
   statement: string,
-  params: Record<string, unknown> = {},
+  params: Record<string, ParamValue> = {},
 ): number {
   return Number(storage.connection.query(statement, params).rows[0]?.count ?? 0);
-}
-
-/** Backdates a knowledge node so ordering tests do not depend on wall-clock resolution. */
-export function setUpdatedAt(storage: RelateKnowledgeStorage, id: string, updatedAt: number): void {
-  storage.connection.query(`MATCH (n:KNode {id: $id}) SET n.updatedAt = $updatedAt`, { id, updatedAt });
 }

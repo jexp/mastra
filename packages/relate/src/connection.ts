@@ -1,5 +1,5 @@
 import { Database } from '@relate/relate';
-import type { Connection as ClientConnection, Row as ClientRow } from '@relate/relate';
+import type { Connection as ClientConnection, ParamValue, Row as ClientRow } from '@relate/relate';
 
 /** Opens a Relate database at `path` (`:memory:`, a file or a directory) and connects to it. */
 export interface RelatePathConfig {
@@ -13,7 +13,12 @@ export interface RelateConnectionConfig {
   path?: never;
 }
 
-export type RelateStorageConfig = RelatePathConfig | RelateConnectionConfig;
+/** Shared tail of both config forms: override the derived storage-isolation key when needed. */
+export interface RelateStorageOptions {
+  storageIsolationKey?: string;
+}
+
+export type RelateStorageConfig = (RelatePathConfig | RelateConnectionConfig) & RelateStorageOptions;
 
 /** One row as a statement returns it: a record of projected columns. Shared by every domain module. */
 export type AdapterRow = ClientRow;
@@ -26,7 +31,7 @@ export interface AdapterContext {
   /** The open Relate connection. The client is synchronous; every call returns materialized rows. */
   readonly connection: ClientConnection;
   /** Runs one statement and returns its materialized rows. */
-  run(statement: string, params?: Record<string, unknown>): AdapterRow[];
+  run(statement: string, params?: Record<string, ParamValue>): AdapterRow[];
   /**
    * Runs `operation` inside `begin`/`commit` and rolls back when it throws. Relate has no
    * nested transactions, so domains call this exactly once per public mutating method; helpers
@@ -37,13 +42,20 @@ export interface AdapterContext {
 }
 
 class RelateContext implements AdapterContext {
-  readonly connection: ClientConnection;
+  readonly #open: () => ClientConnection;
+  #connection?: ClientConnection;
 
-  constructor(connection: ClientConnection) {
-    this.connection = connection;
+  constructor(open: () => ClientConnection) {
+    this.#open = open;
   }
 
-  run(statement: string, params: Record<string, unknown> = {}): AdapterRow[] {
+  /** Opens lazily: constructing a store is side-effect free (two handles may name the same file). */
+  get connection(): ClientConnection {
+    this.#connection ??= this.#open();
+    return this.#connection;
+  }
+
+  run(statement: string, params: Record<string, ParamValue> = {}): AdapterRow[] {
     return this.connection.query(statement, params).rows;
   }
 
@@ -83,13 +95,13 @@ export function projectColumns(
   return [...projected, ...extras].join(', ');
 }
 
-/** Builds the adapter context, opening the database when the config names a path. */
+/** Builds the adapter context, opening the database lazily when the config names a path. */
 export function createAdapterContext(config: RelateStorageConfig): AdapterContext {
   const { connection, path } = config;
   if (connection !== undefined && path !== undefined) {
     throw new TypeError('Relate knowledge storage takes either { path } or { connection }, not both');
   }
-  if (connection !== undefined) return new RelateContext(connection);
-  if (path !== undefined) return new RelateContext(Database.open(path).connect());
+  if (connection !== undefined) return new RelateContext(() => connection);
+  if (path !== undefined) return new RelateContext(() => Database.open(path).connect());
   throw new TypeError('Relate knowledge storage requires { path } or { connection }');
 }

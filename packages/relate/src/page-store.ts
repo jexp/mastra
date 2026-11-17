@@ -54,6 +54,7 @@ import type {
   KnowledgeReadScope,
 } from '@mastra/core/storage';
 
+import type { ParamValue } from '@relate/relate';
 import type { AdapterContext } from './connection';
 import { projectColumns } from './connection';
 
@@ -119,13 +120,17 @@ const PAGE_COLUMNS = [
   'body',
   'version',
   'mergedInto',
-  'createdBy',
-  'updatedBy',
+  'createdByAuthor',
+  'createdBySourceThreadId',
+  'updatedByAuthor',
+  'updatedBySourceThreadId',
   'createdAt',
   'updatedAt',
   'deletedAt',
   'deletedBy',
 ] as const;
+// Relate stores scalar and list properties only (no maps), so provenance maps are flattened into
+// `<role>Author` / `<role>SourceThreadId` string columns.
 const NOTE_COLUMNS = [
   'id',
   'pageId',
@@ -133,7 +138,8 @@ const NOTE_COLUMNS = [
   'when',
   'stampScopeIds',
   'mentions',
-  'provenance',
+  'provenanceAuthor',
+  'provenanceSourceThreadId',
   'version',
   'createdAt',
   'updatedAt',
@@ -146,8 +152,11 @@ const pageProjection = projectColumns('p', PAGE_COLUMNS);
 const noteProjection = projectColumns('n', NOTE_COLUMNS);
 const pinProjection = projectColumns('n', PIN_COLUMNS);
 
-function provenanceProps(provenance: KnowledgeProvenance): Record<string, string> {
-  return { author: provenance.author, ...(provenance.sourceThreadId ? { sourceThreadId: provenance.sourceThreadId } : {}) };
+function provenanceProps(prefix: string, provenance: KnowledgeProvenance): Record<string, string | null> {
+  return {
+    [`${prefix}Author`]: provenance.author,
+    [`${prefix}SourceThreadId`]: provenance.sourceThreadId ?? null,
+  };
 }
 
 function provenanceOf(props: Record<string, unknown> | null | undefined): KnowledgeProvenance {
@@ -171,8 +180,8 @@ function rowToPage(row: Record<string, unknown>): KnowledgePage {
     ...(row.body != null ? { body: row.body as string } : {}),
     version: Number(row.version),
     ...(row.mergedInto != null ? { mergedInto: row.mergedInto as string } : {}),
-    createdBy: provenanceOf(row.createdBy as Record<string, unknown> | null),
-    updatedBy: provenanceOf(row.updatedBy as Record<string, unknown> | null),
+    createdBy: provenanceOf({ author: row.createdByAuthor, sourceThreadId: row.createdBySourceThreadId }),
+    updatedBy: provenanceOf({ author: row.updatedByAuthor, sourceThreadId: row.updatedBySourceThreadId }),
     createdAt: new Date(Number(row.createdAt)),
     updatedAt: new Date(Number(row.updatedAt)),
     ...(row.deletedAt != null ? { deletedAt: new Date(Number(row.deletedAt)) } : {}),
@@ -180,7 +189,7 @@ function rowToPage(row: Record<string, unknown>): KnowledgePage {
   };
 }
 
-function pageProps(page: KnowledgePage): Record<string, unknown> {
+function pageProps(page: KnowledgePage): Record<string, ParamValue> {
   return {
     id: page.id,
     scopeId: page.scopeId,
@@ -195,8 +204,8 @@ function pageProps(page: KnowledgePage): Record<string, unknown> {
     body: page.body ?? null,
     version: page.version,
     mergedInto: page.mergedInto ?? null,
-    createdBy: provenanceProps(page.createdBy),
-    updatedBy: provenanceProps(page.updatedBy),
+    ...provenanceProps('createdBy', page.createdBy),
+    ...provenanceProps('updatedBy', page.updatedBy),
     createdAt: page.createdAt.getTime(),
     updatedAt: page.updatedAt.getTime(),
     deletedAt: page.deletedAt?.getTime() ?? null,
@@ -212,7 +221,7 @@ function rowToNote(row: Record<string, unknown>): KnowledgeNote {
     ...(row.when != null ? { when: new Date(Number(row.when)) } : {}),
     stampScopeIds: (row.stampScopeIds as string[]) ?? [],
     mentions: (row.mentions as string[]) ?? [],
-    provenance: provenanceOf(row.provenance as Record<string, unknown> | null),
+    provenance: provenanceOf({ author: row.provenanceAuthor, sourceThreadId: row.provenanceSourceThreadId }),
     version: Number(row.version),
     createdAt: new Date(Number(row.createdAt)),
     updatedAt: new Date(Number(row.updatedAt)),
@@ -221,7 +230,7 @@ function rowToNote(row: Record<string, unknown>): KnowledgeNote {
   };
 }
 
-function noteProps(note: KnowledgeNote): Record<string, unknown> {
+function noteProps(note: KnowledgeNote): Record<string, ParamValue> {
   return {
     id: note.id,
     pageId: note.pageId,
@@ -229,7 +238,7 @@ function noteProps(note: KnowledgeNote): Record<string, unknown> {
     when: note.when?.getTime() ?? null,
     stampScopeIds: note.stampScopeIds,
     mentions: note.mentions,
-    provenance: provenanceProps(note.provenance),
+    ...provenanceProps('provenance', note.provenance),
     version: note.version,
     createdAt: note.createdAt.getTime(),
     updatedAt: note.updatedAt.getTime(),
@@ -251,7 +260,7 @@ function rowToPin(row: Record<string, unknown>): KnowledgePin {
   };
 }
 
-function pinProps(pin: KnowledgePin): Record<string, unknown> {
+function pinProps(pin: KnowledgePin): Record<string, ParamValue> {
   return {
     id: pin.id,
     pageId: pin.pageId,
@@ -264,8 +273,11 @@ function pinProps(pin: KnowledgePin): Record<string, unknown> {
   };
 }
 
-/** One label per Knowledge domain; the reset and schema probe sweep exactly these (plus legacy schema-2 labels). */
+/** One label per Knowledge domain; the schema probe sweeps exactly these (plus legacy schema-2 labels). */
 export const KNOWLEDGE_LABELS = ['KPage', 'KNote', 'KPin', 'KActivity', 'KBodyLink', 'KMeta'] as const;
+
+/** Schema-2 labels (the pre-schema-4 adapter): their presence means reset/drop, never migration. */
+export const LEGACY_KNOWLEDGE_LABELS = ['KNode', 'KRecord', 'KOutbox', 'KScope'] as const;
 
 export class RelateKnowledgePageStore implements KnowledgePageStore {
   readonly #ctx: AdapterContext;
@@ -274,13 +286,16 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
   // Per-frame state, allocated by #frame: an identity cache so reads inside a mutation see the
   // reference's object semantics, and dirty sets flushed before commit. Undefined outside a frame.
   #cachedPages?: Map<string, KnowledgePage | null>;
-  #dirtyPages?: Map<string, KnowledgePage | null>;
+  #dirtyPages?: Map<string, KnowledgePage>;
   #cachedNotes?: Map<string, KnowledgeNote | null>;
-  #dirtyNotes?: Map<string, KnowledgeNote | null>;
+  #dirtyNotes?: Map<string, KnowledgeNote>;
   #cachedPins?: Map<string, KnowledgePin | null>;
   #dirtyPins?: Map<string, KnowledgePin | null>;
   #dirtyBodyLinks?: Map<string, KnowledgePageBodyLink[] | null>;
   #appendedActivity?: KnowledgePageActivityEvent[];
+  // Set after the first full KPage scan in a frame: the frame's transaction sees no external
+  // writes and every mutation lands in the cache, so the cache is the whole working set then.
+  #allPagesLoaded?: boolean;
 
   constructor(context: AdapterContext) {
     this.#ctx = context;
@@ -302,6 +317,7 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
     this.#dirtyPins = new Map();
     this.#dirtyBodyLinks = new Map();
     this.#appendedActivity = [];
+    this.#allPagesLoaded = false;
     try {
       return this.#ctx.transaction(() => {
         const value = operation();
@@ -317,23 +333,29 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
       this.#dirtyPins = undefined;
       this.#dirtyBodyLinks = undefined;
       this.#appendedActivity = undefined;
+      this.#allPagesLoaded = undefined;
     }
   }
 
   /** Writes every dirty entity back whole; a null property removes the property (engine-verified). */
   #flush(): void {
     for (const [id, page] of this.#dirtyPages!) {
-      if (page === null) this.#ctx.run('MATCH (n:KPage {id: $id}) DETACH DELETE n', { id });
-      else this.#ctx.run('MERGE (n:KPage {id: $id}) SET n = $props', { id, props: pageProps(page) });
+      this.#ctx.run('MERGE (n:KPage {id: $id}) SET n = $props', { id, props: pageProps(page) });
     }
     for (const [id, note] of this.#dirtyNotes!) {
-      if (note === null) this.#ctx.run('MATCH (n:KNote {id: $id}) DETACH DELETE n', { id });
-      else this.#ctx.run('MERGE (n:KNote {id: $id}) SET n = $props', { id, props: noteProps(note) });
+      this.#ctx.run('MERGE (n:KNote {id: $id}) SET n = $props', { id, props: noteProps(note) });
     }
     for (const [pinKey, pin] of this.#dirtyPins!) {
-      const [kind, pageId] = pinKey.split('\u0000');
+      const separator = pinKey.indexOf('\u0000');
+      const kind = pinKey.slice(0, separator);
+      const pageId = pinKey.slice(separator + 1);
       if (pin === null) this.#ctx.run('MATCH (n:KPin {kind: $kind, pageId: $pageId}) DELETE n', { kind, pageId });
-      else this.#ctx.run('MERGE (n:KPin {kind: $kind, pageId: $pageId}) SET n = $props', { kind, pageId, props: pinProps(pin) });
+      else
+        this.#ctx.run('MERGE (n:KPin {kind: $kind, pageId: $pageId}) SET n = $props', {
+          kind,
+          pageId,
+          props: pinProps(pin),
+        });
     }
     for (const [pageId, links] of this.#dirtyBodyLinks!) {
       this.#ctx.run('MATCH (l:KBodyLink {pageId: $pageId}) DELETE l', { pageId });
@@ -378,13 +400,42 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
   }
 
   #fetchAllPages(): KnowledgePage[] {
-    const rows = this.#ctx.run(`MATCH (p:KPage) RETURN ${pageProjection}`);
-    const pages = new Map<string, KnowledgePage>(rows.map(row => [(row.id as string), rowToPage(row)]));
-    for (const [id, page] of this.#cachedPages ?? []) {
-      if (page === null) pages.delete(id);
-      else pages.set(id, page);
+    // One engine scan per frame is enough: after it the identity cache holds every page (the scan
+    // registers engine rows, mutations go through #putPage), so later calls read the cache only.
+    if (!this.#allPagesLoaded) {
+      const rows = this.#ctx.run(`MATCH (p:KPage) RETURN ${pageProjection}`);
+      for (const row of rows) {
+        const id = row.id as string;
+        if (!this.#cachedPages?.has(id)) this.#cachedPages?.set(id, rowToPage(row));
+      }
+      this.#allPagesLoaded = true;
     }
-    return [...pages.values()];
+    const pages: KnowledgePage[] = [];
+    for (const page of this.#cachedPages?.values() ?? []) if (page !== null) pages.push(page);
+    return pages;
+  }
+
+  /**
+   * Only the children of one parent, for the per-parent helpers (#children, #childByKey,
+   * #nextPosition) that bulk paths call once per page: a parentId-scoped indexed query instead of
+   * the full scan. Cache entries are filtered by their current parentId, so pages moved or created
+   * this frame land on the right side.
+   */
+  #fetchChildren(parentId: string | null): KnowledgePage[] {
+    if (!this.#allPagesLoaded) {
+      const rows =
+        parentId === null
+          ? this.#ctx.run(`MATCH (p:KPage) WHERE p.parentId IS NULL RETURN ${pageProjection}`)
+          : this.#ctx.run(`MATCH (p:KPage {parentId: $parentId}) RETURN ${pageProjection}`, { parentId });
+      for (const row of rows) {
+        const id = row.id as string;
+        if (!this.#cachedPages?.has(id)) this.#cachedPages?.set(id, rowToPage(row));
+      }
+    }
+    const pages: KnowledgePage[] = [];
+    for (const page of this.#cachedPages?.values() ?? [])
+      if (page !== null && page.parentId === parentId) pages.push(page);
+    return pages;
   }
 
   #fetchNote(id: string): KnowledgeNote | undefined {
@@ -400,11 +451,12 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
 
   #fetchAllNotes(): KnowledgeNote[] {
     const rows = this.#ctx.run(`MATCH (n:KNote) RETURN ${noteProjection}`);
-    const notes = new Map<string, KnowledgeNote>(rows.map(row => [(row.id as string), rowToNote(row)]));
+    const notes = new Map<string, KnowledgeNote>(rows.map(row => [row.id as string, rowToNote(row)]));
     for (const [id, note] of this.#cachedNotes ?? []) {
       if (note === null) notes.delete(id);
       else notes.set(id, note);
     }
+    for (const [id, note] of notes) if (!this.#cachedNotes?.has(id)) this.#cachedNotes?.set(id, note);
     return [...notes.values()];
   }
 
@@ -418,7 +470,10 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
       const cached = this.#cachedPins.get(key);
       return cached === null ? undefined : cached;
     }
-    const rows = this.#ctx.run(`MATCH (n:KPin {pageId: $pageId, kind: $kind}) RETURN ${pinProjection}`, { pageId, kind });
+    const rows = this.#ctx.run(`MATCH (n:KPin {pageId: $pageId, kind: $kind}) RETURN ${pinProjection}`, {
+      pageId,
+      kind,
+    });
     const pin = rows[0] ? rowToPin(rows[0]) : undefined;
     this.#cachedPins?.set(key, pin ?? null);
     return pin;
@@ -426,21 +481,30 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
 
   #fetchAllPins(): KnowledgePin[] {
     const rows = this.#ctx.run(`MATCH (n:KPin) RETURN ${pinProjection}`);
-    const pins = new Map<string, KnowledgePin>(rows.map(row => [this.#pinKey(row.pageId as string, row.kind as KnowledgePinKind), rowToPin(row)]));
+    const pins = new Map<string, KnowledgePin>(
+      rows.map(row => [this.#pinKey(row.pageId as string, row.kind as KnowledgePinKind), rowToPin(row)]),
+    );
     for (const [key, pin] of this.#cachedPins ?? []) {
       if (pin === null) pins.delete(key);
       else pins.set(key, pin);
     }
+    for (const [key, pin] of pins) if (!this.#cachedPins?.has(key)) this.#cachedPins?.set(key, pin);
     return [...pins.values()];
   }
 
   #fetchAllBodyLinks(): Map<string, KnowledgePageBodyLink[]> {
     const links = new Map<string, KnowledgePageBodyLink[]>();
-    const rows = this.#ctx.run('MATCH (l:KBodyLink) RETURN l.pageId AS pageId, l.ref AS ref, l.toPageId AS toPageId, l.count AS count');
+    const rows = this.#ctx.run(
+      'MATCH (l:KBodyLink) RETURN l.pageId AS pageId, l.ref AS ref, l.toPageId AS toPageId, l.count AS count',
+    );
     for (const row of rows) {
       const pageId = row.pageId as string;
       const list = links.get(pageId) ?? [];
-      list.push({ ref: row.ref as string, toPageId: (row.toPageId as string | null) ?? null, count: Number(row.count) });
+      list.push({
+        ref: row.ref as string,
+        toPageId: (row.toPageId as string | null) ?? null,
+        count: Number(row.count),
+      });
       links.set(pageId, list);
     }
     for (const [pageId, dirty] of this.#dirtyBodyLinks ?? []) {
@@ -500,7 +564,12 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
     return new Date(this.#clock);
   }
 
-  #log(action: KnowledgePageActivityAction, page: KnowledgePage, provenance: KnowledgeProvenance, noteId?: string): void {
+  #log(
+    action: KnowledgePageActivityAction,
+    page: KnowledgePage,
+    provenance: KnowledgeProvenance,
+    noteId?: string,
+  ): void {
     this.#appendedActivity!.push({
       id: crypto.randomUUID(),
       action,
@@ -552,11 +621,32 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
   }
 
   #children(parentId: string | null): KnowledgePage[] {
-    return this.#fetchAllPages().filter(page => page.parentId === parentId && !page.deletedAt);
+    return this.#fetchChildren(parentId).filter(page => !page.deletedAt);
   }
 
   #nextPosition(parentId: string | null): string {
-    const last = this.#children(parentId).sort(byPosition).at(-1);
+    // The last child by (position, id) in one row from the engine — bulk inserts call this per
+    // page — with the frame's cache overlaying pages created since the last flush.
+    const rows =
+      parentId === null
+        ? this.#ctx.run(
+            'MATCH (p:KPage) WHERE p.parentId IS NULL AND p.deletedAt IS NULL RETURN p.position AS position, p.id AS id ORDER BY p.position DESC, p.id DESC LIMIT 1',
+          )
+        : this.#ctx.run(
+            'MATCH (p:KPage {parentId: $parentId}) WHERE p.deletedAt IS NULL RETURN p.position AS position, p.id AS id ORDER BY p.position DESC, p.id DESC LIMIT 1',
+            { parentId },
+          );
+    let last = rows[0] === undefined ? undefined : { position: rows[0]!.position as string, id: rows[0]!.id as string };
+    for (const page of this.#cachedPages?.values() ?? []) {
+      if (page === null || page.deletedAt || page.parentId !== parentId) continue;
+      if (
+        last === undefined ||
+        page.position > last.position ||
+        (page.position === last.position && page.id > last.id)
+      ) {
+        last = { position: page.position, id: page.id };
+      }
+    }
     return knowledgePositionBetween(last?.position);
   }
 
@@ -642,8 +732,25 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
   }
 
   #childByKey(parentId: string, key: string, except?: string): KnowledgePage | undefined {
-    for (const page of this.#fetchAllPages()) {
-      if (page.parentId === parentId && !page.isScope && page.key === key && !page.deletedAt && page.id !== except) {
+    // One indexed (parentId, key) lookup instead of the parent's whole child list; the cache scan
+    // covers pages created since the last flush.
+    const rows = this.#ctx.run(`MATCH (p:KPage {parentId: $parentId, key: $key}) RETURN ${pageProjection}`, {
+      parentId,
+      key,
+    });
+    for (const row of rows) {
+      const id = row.id as string;
+      if (!this.#cachedPages?.has(id)) this.#cachedPages?.set(id, rowToPage(row));
+    }
+    for (const page of this.#cachedPages?.values() ?? []) {
+      if (
+        page !== null &&
+        page.parentId === parentId &&
+        !page.isScope &&
+        page.key === key &&
+        !page.deletedAt &&
+        page.id !== except
+      ) {
         return page;
       }
     }
@@ -946,7 +1053,8 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
       const ids = new Set(input.pageIds);
       const direction = input.direction ?? 'both';
       const limit = input.limit ?? 1_000;
-      if (!Number.isInteger(limit) || limit < 1) throw new RangeError('Knowledge link limit must be a positive integer');
+      if (!Number.isInteger(limit) || limit < 1)
+        throw new RangeError('Knowledge link limit must be a positive integer');
       const kindOrder = (kind: KnowledgePageLinkKind) => (kind === 'body' ? 0 : 1);
       return this.#visibleLinks(input.read, input.kinds)
         .filter(
@@ -1424,7 +1532,9 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
     });
   }
 
-  async listPins(input: Parameters<Store['listPins']>[0]): Promise<{ pins: KnowledgeListedPin[]; nextCursor?: string; total?: number }> {
+  async listPins(
+    input: Parameters<Store['listPins']>[0],
+  ): Promise<{ pins: KnowledgeListedPin[]; nextCursor?: string; total?: number }> {
     return this.#frame(() => {
       const audience = input.audience === 'all' ? null : new Set(input.audience);
       const pins = this.#fetchAllPins()
@@ -1447,13 +1557,18 @@ export class RelateKnowledgePageStore implements KnowledgePageStore {
     });
   }
 
-  /** Deletes every Knowledge node (pages, notes, pins, activity, body links, the version marker). */
-  dangerouslyClearAll(): void {
+  /**
+   * Deletes every Knowledge node (pages, notes, pins, activity, body links, and legacy schema-2
+   * nodes) and, unless `keepMarker` is set, the schema-version marker too. Clearing data while
+   * keeping the marker is what `dangerouslyClearAll` means; `dangerouslyReset` drops both and
+   * lets `init()` stamp a fresh marker.
+   */
+  dangerouslyClearAll({ keepMarker = false }: { keepMarker?: boolean } = {}): void {
     this.#ctx.transaction(() => {
-      // Legacy schema-2 labels are swept too, so a reset recovers a pre-schema-4 store.
       this.#ctx.run('MATCH (n) WHERE any(label IN labels(n) WHERE label IN $labels) DETACH DELETE n', {
-        labels: [...KNOWLEDGE_LABELS, 'KNode', 'KRecord', 'KOutbox', 'KScope'],
+        labels: [...KNOWLEDGE_LABELS.filter(label => label !== 'KMeta'), ...LEGACY_KNOWLEDGE_LABELS],
       });
+      if (!keepMarker) this.#ctx.run('MATCH (m:KMeta) DETACH DELETE m');
     });
   }
 }
