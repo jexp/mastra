@@ -1,0 +1,102 @@
+---
+title: Relate Storage
+sidebar_label: Relate Storage
+description: "Use the Relate storage adapter to keep Mastra's Knowledge pages and notes in an embedded openCypher graph database."
+packages:
+  - "@mastra/relate"
+---
+
+# Relate Storage
+
+`@mastra/relate` stores the [Knowledge domain](/reference/storage/overview) in an embedded [Relate](https://relatedb.ai) graph database. Relate runs in the same process as your application, so knowledge pages, notes, and their links stay queryable with Cypher and no database server is required.
+
+:::alpha
+
+Knowledge storage is experimental. Its contract and this adapter can change without notice.
+
+:::
+
+## Installation
+
+```bash npm2yarn
+npm install @mastra/relate
+```
+
+The package brings `@relate/relate`, the Node.js client, as a dependency. The client ships a native library for your platform as an optional dependency, so no C toolchain or environment variables are needed.
+
+## Usage
+
+`RelateKnowledgeStorage` implements the `knowledge` domain. Add it to a composite store when your other domains already have a backend:
+
+```typescript title="src/mastra/index.ts"
+import { Mastra } from '@mastra/core'
+import { MastraCompositeStore } from '@mastra/core/storage'
+import { RelateKnowledgeStorage } from '@mastra/relate'
+
+const storage = new MastraCompositeStore({
+  id: 'storage',
+  domains: {
+    knowledge: new RelateKnowledgeStorage({ path: './knowledge.db' }),
+  },
+})
+
+export const mastra = new Mastra({ storage })
+```
+
+The composite store calls `init()` on the domain before first use. When you use the storage class directly, call it yourself:
+
+```typescript
+import { RelateKnowledgeStorage } from '@mastra/relate'
+
+const storage = new RelateKnowledgeStorage({ path: './knowledge.db' })
+await storage.init()
+```
+
+`init()` stamps the schema version marker and is idempotent. A store left behind by an earlier experimental release (schema 2) is dropped on init, rows included, because that data was never migrated. A schema-4 marker from a newer release is never upgraded over: `init()` throws `KnowledgeSchemaResetRequiredError` until you call `dangerouslyReset()`.
+
+## Constructor options
+
+- `path` (string): Path to the database. Use `:memory:` for an in-memory database, or a file or directory path for a persistent one.
+- `connection` (`Connection`): An already-open Relate connection. The caller keeps ownership of the database.
+- `storageIsolationKey` (string, optional): Overrides the derived storage-isolation key, which Mastra's shared-storage guard uses to detect two Knowledge domains over the same physical database.
+
+Pass exactly one of `path` or `connection`. Passing both, or neither, throws a `TypeError`. Constructing the store is side-effect free: the database connects lazily on first use. `storage.connection` returns the open connection when your application needs to run raw Cypher against the same database.
+
+## Schema
+
+Knowledge data lives under dedicated labels: `KPage` for pages and scope pages, `KNote` for notes, `KPin` for pins, `KActivity` for the activity log, and `KBodyLink` for body links. A `KMeta` node carries the schema version marker. The page tree is the `parentId` property, and pages reference their home scope by `scopeId`. Timestamps are stored as epoch milliseconds.
+
+The adapter owns only those labels. Other nodes and relationships in the same database belong to your application and are left alone by schema inspection and by `dangerouslyReset()`.
+
+Because page bodies are stored in one `body` property, you can open the same store as a Relate markdown vault. Create the vault store on an empty directory with the Relate CLI:
+
+```bash
+relate --snapshot-format markdown --database ./knowledge-vault
+```
+
+Pages then round-trip as `KPage/<name>.md` files (one per page, named after the page name) with YAML frontmatter and `[[wikilinks]]`, which you can also read in Obsidian. Edits to a file's body made while the database is closed are picked up at the next open. Editing the YAML frontmatter itself is not supported by `@relate/relate` 1.0.1 and can make the next open fail, so treat the frontmatter as generated. The vault codec is fixed when the store is created, and one process can write at a time.
+
+## Soft delete
+
+`deletePage()` does not remove a page. The page node keeps its `KPage` label and gains `deletedAt` and `deletedBy` properties that record when and by whom the page was removed.
+
+- Listings, searches, and path or name lookups skip deleted pages. `getPage` still returns a removed page with `deletedAt` set, which is the schema-4 contract.
+- `getNote({ includeDeleted: true })` and `listNotes({ includeDeleted: true })` return removed notes.
+- `restoreNote()` clears `deletedAt` and `deletedBy` and brings the note back.
+- `mergePages()` soft-deletes the source page and records the target in `mergedInto`.
+
+`dangerouslyReset()` deletes every Knowledge-labeled node, including the legacy schema-2 labels from earlier experimental releases (`KNode`, `KRecord`, `KOutbox`, `KScope`), and leaves all application data in place. `init()` also drops schema-2 data on its own, so an old experimental store recovers without an explicit reset.
+
+## Capabilities
+
+`getCapabilities()` reports contract version 4 and schema version 4 with `supportsSchemaInspection`, `supportsExplicitReset`, and `supportsPinKinds` enabled. `inspectSchema()` reports whether the store is compatible, uninitialized, needs a reset, or is unavailable.
+
+## Development
+
+The dependency is published, so repository builds need no extra setup:
+
+```bash npm2yarn
+pnpm install --filter "@mastra/relate..."
+pnpm turbo build --filter=@mastra/relate
+pnpm --filter @mastra/relate test
+```
